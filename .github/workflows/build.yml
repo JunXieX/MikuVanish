@@ -14,23 +14,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 配置 JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '25'
 
-      - name: 配置 Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      # 构建统一在 CI 完成：三个模块的 jar 均输出到仓库根目录。
+      # 构建统一在 CI 完成（经 Gradle wrapper），三个模块的 jar 均输出到仓库根目录。
       - name: 构建
-        run: ./gradlew build
+        run: ./gradlew build --no-daemon
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MikuVanish
           path: MikuVanish-*.jar
