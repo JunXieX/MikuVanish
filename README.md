@@ -1,66 +1,84 @@
 # MikuVanish
 
-跨服隐身插件。代理端（Velocity）为隐身状态的权威源，后端（Paper / Folia）作为镜像应用可见性，并通过 plugin messaging 实时同步。
+作者：JunXieX
+MikuMC系列插件交流群：1105054380
+非开源项目，请勿二次分发
 
-## 模块
+跨服隐身插件。隐身状态由代理端统一管理并实时同步到所有后端：隐身玩家对普通玩家完全不可见，也不会出现在服务器列表的在线人数与样例中。
 
-| 模块 | 说明 |
+## 环境要求
+
+| 项目 | 要求 |
 | --- | --- |
-| `mikuvanish-api` | 跨平台共享模型、可见性策略与同步协议。编译期直接并入两个平台模块，运行期无需单独安装。 |
-| `mikuvanish-velocity` | 代理端插件（权威）：维护全网络状态、持久化、与后端同步、处理命令。 |
-| `mikuvanish-paper` | 后端插件（Paper + Folia）：应用世界隐藏、tab 隐藏，并兼容 TAB。 |
-
-## 运行环境
-
-- 后端：Paper / Folia（`paper-api 26.2`，`folia-supported: true`）
-- 代理：Velocity 4.x
-- JDK 25
-
-## 构建
-
-构建统一由 GitHub Actions 完成（见 `.github/workflows/build.yml`）：推送 `v*` 标签即构建并发布 Release，三个 jar 作为附件。
-
-本地仅做编译校验，产物同样输出到仓库根目录：
-
-```
-./gradlew build
-```
+| Minecraft | 26.2（仅支持最新版，不做向下兼容） |
+| Java | 25 |
+| 代理端 | Velocity 4.x |
+| 后端 | Paper 或 Folia |
 
 ## 安装
 
-1. `MikuVanish-Velocity.jar` 放入代理 `plugins/`。
-2. `MikuVanish-Paper.jar` 放入每个后端 `plugins/`。
-3. 可选：`MikuVanish-API.jar` 供其它插件编译期依赖（API 类已内含于两个平台 jar，运行期不需要单独安装）。
+1. 代理端：把 `MikuVanish-Velocity.jar` 放入代理的 `plugins/` 目录。
+2. 每个后端：把 `MikuVanish-Paper.jar` 放入后端的 `plugins/` 目录。
+3. 重启整个网络。首次启动会在各端 `plugins/MikuVanish/` 下生成配置文件。
 
-TAB 兼容：若安装 NEZNAMY/TAB，本插件会自动注册其 `VanishIntegration`，让 TAB 的玩家列表、名牌、布局尊重隐身与可见性判定。TAB 需先于本插件加载（`paper-plugin.yml` 中已声明 `load: BEFORE` + `join-classpath`）。
+> 发布包中的 `MikuVanish-API.jar` 仅供其它插件在开发时编译依赖，安装时不需要放入 `plugins/`。
 
-## 命令与权限
+## 前置依赖
 
-| 命令 | 权限 | 说明 |
-| --- | --- | --- |
-| `/vanish`（别名 `/v`、`/vs`） | `mikuvanish.vanish` | 切换自己的隐身 |
-| `/vanish <玩家> [on\|off]` | `mikuvanish.others` | 切换他人的隐身 |
-| `/vanishlist`（别名 `/vlist`） | `mikuvanish.list` | 列出当前隐身玩家 |
+- 无强制前置依赖。
+- 可选（建议）：安装 **NEZNAMY/TAB**。安装后本插件会自动接入 TAB，让 TAB 的玩家列表、名牌与布局一并尊重隐身状态。
+
+## 命令
+
+代理端与后端均注册了以下命令（后端命令在对应后端执行，代理命令在整个网络内有效）。
+
+| 命令 | 说明 |
+| --- | --- |
+| `/vanish`（别名 `/v`、`/vs`） | 切换自己的隐身状态 |
+| `/vanish <玩家> [on\|off]` | 切换指定玩家的隐身状态；省略 `on`/`off` 时取反 |
+| `/vanishlist`（别名 `/vlist`） | 列出当前隐身玩家 |
+
+## 权限
 
 | 权限 | 默认 | 说明 |
 | --- | --- | --- |
-| `mikuvanish.seevanished` | op | 看见隐身玩家（唯一的可见性开关） |
-| `mikuvanish.bypass.lock` | false | 静默打开上锁容器（默认交由原版锁判定） |
+| `mikuvanish.vanish` | op | 使用 `/vanish` 切换自己的隐身 |
+| `mikuvanish.others` | op | 对其它玩家使用 `/vanish` |
+| `mikuvanish.list` | op | 查看隐身玩家列表 |
+| `mikuvanish.seevanished` | op | 能看见隐身玩家（唯一的可见性开关） |
+| `mikuvanish.bypass.lock` | 关闭 | 静默打开上锁容器 |
 
 ## 配置
 
-- 后端 `config.yml`：行为拦截开关（聊天 / 伤害 / 拾取 / 丢弃 / 索敌 / 痕迹播报默认开启；世界交互类默认关闭），以及静默容器。
-- 代理 `config.yml`：
-  - `ping-hide-vanished`：服务器列表 ping 是否扣除并隐藏隐身玩家（默认 `true`）。
-  - `save-interval-seconds`：隐身状态落盘间隔（默认 `5`，原子写入、失败自动重试）。
+### 代理端 `plugins/MikuVanish/config.yml`
 
-## 同步机制
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `ping-hide-vanished` | `true` | 服务器列表的在线人数是否扣除隐身玩家，并从玩家样例中移除 |
+| `save-interval-seconds` | `5` | 隐身状态的落盘间隔（秒） |
 
-- 后端启用或重载时发送 `HELLO`，代理回推全量隐身快照（`STATE_UPDATE`）后以 `SYNC_COMPLETE` 收尾。
-- 玩家进入后端前，代理经 `ServerPreConnectEvent` 预推送其隐身状态，保证后端在 `PlayerJoinEvent` 时已持有正确结果（供消息抑制等依赖隐身的插件同步查询）；连接完成后 `ServerPostConnectEvent` 再补推一次。
-- 增量变更通过 `STATE_UPDATE` 双向流动；代理收到后盖写 `serverId`、落库并广播，保证多后端一致。
+### 后端 `plugins/MikuVanish/config.yml`
 
-## 已知限制
+隐身行为拦截开关。默认只拦截会直接暴露隐身者存在的几类行为，世界交互类一律放行，便于隐身时正常游玩。
 
-1. **空后端的预推送窗口**：Velocity 的插件消息必须借道一条已连接的玩家连接，目标服务器无人在线时会被静默丢弃。因此「首个进入空服的隐身玩家」只能在 `ServerPostConnectEvent` 阶段补推，其 `PlayerJoinEvent` 时刻可能尚未同步到隐身状态。非空后端不受影响。
-2. **后端同步通道的来源校验**：插件消息在 Bukkit API 层无法区分代理转发与客户端直发。本插件已按 PaperMC 的指引把该通道消息标记为 `handled()`，阻断客户端经代理伪造；但仍建议后端服务器不要直接对公网暴露，仅允许代理访问。
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `prevent.chat` | `true` | 隐身时禁止发言（消息以 `!` 开头可临时绕过） |
+| `prevent.damage` | `true` | 玩家之间的双向伤害（含投射物）；环境与怪物伤害不受限制 |
+| `prevent.pickup` | `true` | 禁止拾取物品 |
+| `prevent.drop` | `true` | 禁止丢弃物品 |
+| `prevent.target` | `true` | 清除怪物对隐身者的索敌 |
+| `prevent.announcements` | `true` | 隐藏死亡消息、成就公告与袭击触发 |
+| `prevent.block-break` | `false` | 禁止破坏方块 |
+| `prevent.block-place` | `false` | 禁止放置方块与实体（盔甲架、船、矿车等） |
+| `prevent.redstone-interact` | `false` | 禁止红石类交互（按钮、门、拉杆、压力板等） |
+| `prevent.entity-interact` | `false` | 禁止右键实体（骑乘、驯服、拴绳、剪羊毛等） |
+| `prevent.world-interact` | `false` | 禁止其它可被察觉的世界交互（桶、射击、投掷物、钓鱼、音符盒等） |
+| `prevent.block-modify` | `false` | 禁止会改变方块外观的交互（蛋糕、告示牌、花盆、锄地、去皮等） |
+| `silent-container` | `true` | 隐身者开箱不产生开启动画与音效（仍可正常存取物品） |
+
+## 注意事项
+
+- 隐身状态保存在代理端，玩家重连后仍保持隐身；跨服移动不会暴露。
+- 建议后端服务器只对代理开放，不要直接暴露到公网。
+- 若某后端当前无人在线，首位隐身玩家进入该后端时，进服瞬间的隐身状态可能尚未同步完成，插件会自动补齐。
