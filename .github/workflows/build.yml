@@ -1,0 +1,48 @@
+name: build
+
+on:
+  push:
+    branches: [ "**" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # 构建统一在 CI 完成：三个模块的 jar 均输出到仓库根目录。
+      - name: 构建
+        run: ./gradlew build
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: MikuVanish
+          path: MikuVanish-*.jar
+          if-no-files-found: error
+
+      # 推送 v* 标签时发布正式版，并把三个 jar 作为 Release 附件（文件名含版本号，用通配符匹配）。
+      - name: 发布正式版
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            MikuVanish-*.jar \
+            --title "MikuVanish ${GITHUB_REF_NAME}" \
+            --generate-notes

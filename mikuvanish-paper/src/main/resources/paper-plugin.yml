@@ -1,0 +1,34 @@
+name: MikuVanish
+version: '${version}'
+main: dev.junxiex.mikuvanish.paper.MikuVanishPaper
+api-version: '26.2'
+folia-supported: true
+description: Cross-server vanish with tab hiding (Paper + Folia, Velocity-synced).
+authors:
+  - JunXieX
+dependencies:
+  server:
+    # TAB 需先于本插件加载：本插件在其启用时才注册 VanishIntegration。
+    # join-classpath 让本插件能直接引用 TAB-API 类（Paper 插件默认类加载隔离）。
+    TAB:
+      load: BEFORE
+      required: false
+      join-classpath: true
+# 命令由 Brigadier 在代码中注册（见 MikuVanishPaper 的 COMMANDS 生命周期事件），
+# 权限在此声明以获得默认值与文档，实际判定在命令树的 requires 中。
+permissions:
+  mikuvanish.vanish:
+    description: 使用 /vanish 切换自己的隐身
+    default: op
+  mikuvanish.others:
+    description: 对其他玩家使用 /vanish
+    default: op
+  mikuvanish.list:
+    description: 查看隐身玩家列表
+    default: op
+  mikuvanish.seevanished:
+    description: 看见隐身玩家
+    default: op
+  mikuvanish.bypass.lock:
+    description: 静默打开上锁容器（默认关闭，交由原版锁判定）
+    default: false

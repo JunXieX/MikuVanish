@@ -1,0 +1,21 @@
+# 构建产物（CI 产出，不入库）
+build/
+**/build/
+.gradle/
+**/.gradle/
+# 根目录产出的 jar（由 GitHub Actions 构建）
+/*.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+
+# 系统
+.DS_Store
+Thumbs.db
