@@ -1,6 +1,7 @@
 package dev.junxiex.mikuvanish.paper;
 
 import com.destroystokyo.paper.event.player.PlayerLaunchProjectileEvent;
+import com.destroystokyo.paper.loottable.LootableInventory;
 import dev.junxiex.mikuvanish.api.VanishState;
 import dev.junxiex.mikuvanish.api.VisibilityPolicy;
 import io.papermc.paper.event.player.AsyncChatEvent;
@@ -38,6 +39,7 @@ import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerHarvestBlockEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerRiptideEvent;
 import org.bukkit.event.raid.RaidTriggerEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -78,19 +80,17 @@ final class BehaviorListener implements Listener {
             Material.SWEET_BERRY_BUSH, Material.CAVE_VINES, Material.CAVE_VINES_PLANT,
             Material.REDSTONE_ORE, Material.DEEPSLATE_REDSTONE_ORE);
 
-    /** 放置实体的物品：放置行为由 block-place（EntityPlaceEvent）判定，此处不重复拦截。 */
-    private static final Set<Material> ENTITY_PLACEMENT_ITEMS = Set.of(
-            Material.ARMOR_STAND, Material.PAINTING, Material.ITEM_FRAME, Material.GLOW_ITEM_FRAME,
-            Material.END_CRYSTAL, Material.STRING,
-            Material.MINECART, Material.CHEST_MINECART, Material.FURNACE_MINECART,
-            Material.HOPPER_MINECART, Material.TNT_MINECART, Material.COMMAND_BLOCK_MINECART);
-
-    /** 桶类物品：倒/取液体由 world-interact 判定，此处不重复拦截。 */
-    private static final Set<Material> BUCKET_ITEMS = Set.of(
-            Material.BUCKET, Material.WATER_BUCKET, Material.LAVA_BUCKET, Material.MILK_BUCKET,
-            Material.POWDER_SNOW_BUCKET, Material.AXOLOTL_BUCKET, Material.COD_BUCKET,
-            Material.SALMON_BUCKET, Material.PUFFERFISH_BUCKET, Material.TROPICAL_FISH_BUCKET,
-            Material.TADPOLE_BUCKET);
+    /**
+     * 非工具类、但会一次性改变方块外观的物品。
+     *
+     * <p>工具类（锄 / 斧 / 锹）由 {@link Tag#ITEMS_HOES} 等原版标签覆盖；刷怪蛋按名字后缀
+     * 判定（原版无对应标签，且其产物是实体、不会触发 {@code EntityPlaceEvent}，故必须在此
+     * 拦截）。桶类归 {@code world-interact}，不列入，避免开关相互耦合。</p>
+     */
+    private static final Set<Material> BLOCK_MODIFYING_ITEMS = Set.of(
+            Material.BONE_MEAL, Material.FLINT_AND_STEEL, Material.FIRE_CHARGE,
+            Material.HONEYCOMB, Material.GLOW_INK_SAC, Material.INK_SAC,
+            Material.SHEARS, Material.BRUSH);
 
     private final VanishManager manager;
     private final BehaviorConfig config;
@@ -151,6 +151,21 @@ final class BehaviorListener implements Listener {
         }
         Player picker = asPlayer(event.getEntity());
         if (picker != null && manager.isVanished(picker.getUniqueId())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * 拾取箭矢。
+     *
+     * <p>箭矢的拾取走 {@code AbstractArrow} 的独立流程，只触发 {@link PlayerPickupArrowEvent}
+     * （其父类是被弃用的 {@code PlayerPickupItemEvent}），<b>不会</b>触发
+     * {@link EntityPickupItemEvent}。因此上面的 {@code onPickup} 覆盖不到箭矢，
+     * 需要在此单独拦截，否则「禁止拾取物品」会漏掉最常见的可拾取投射物。</p>
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPickupArrow(PlayerPickupArrowEvent event) {
+        if (config.pickup() && manager.isVanished(event.getPlayer().getUniqueId())) {
             event.setCancelled(true);
         }
     }
@@ -306,11 +321,14 @@ final class BehaviorListener implements Listener {
     }
 
     /**
-     * 主/副手是否持有「作用于方块」的物品（锄地、去皮、铲路、骨粉催熟、刷怪蛋、打火石、涂蜡等）。
+     * 主/副手是否持有「作用于方块」的物品（锄地、去皮、铲路、骨粉催熟、打火石、剪取、涂蜡等）。
      *
      * <p>这类改动由物品驱动，既不产生 {@code BlockPlaceEvent} 也不产生 {@code EntityPlaceEvent}，
-     * 只能在交互事件里拦。放置类物品（方块、船/矿车/盔甲架/画/展示框）与桶类分别由
-     * {@code block-place}、{@code world-interact} 负责，此处排除以免开关相互耦合。</p>
+     * 只能在交互事件里拦。</p>
+     *
+     * <p>判定刻意采用<b>白名单</b>而非「非方块物品即算」的宽松启发式：后者会把食物、药水、
+     * 末影珍珠等大量与方块无关的物品误判为「改方块」，导致手持食物对着方块进食也被拦截，
+     * 与本插件「尽量保留完整交互」的目标相悖。</p>
      */
     private static boolean holdsBlockModifyingItem(Player player) {
         return isBlockModifyingItem(player.getInventory().getItemInMainHand())
@@ -319,9 +337,15 @@ final class BehaviorListener implements Listener {
 
     private static boolean isBlockModifyingItem(ItemStack item) {
         Material type = item.getType();
-        return !type.isAir() && !type.isBlock()
-                && !BUCKET_ITEMS.contains(type) && !ENTITY_PLACEMENT_ITEMS.contains(type)
-                && !Tag.ITEMS_BOATS.isTagged(type) && !Tag.ITEMS_CHEST_BOATS.isTagged(type);
+        if (type.isAir()) {
+            return false;
+        }
+        // 工具类用原版标签表达（锄地 / 去皮 / 铲路）；其余为清单内的一次性动作物品。
+        return Tag.ITEMS_HOES.isTagged(type)
+                || Tag.ITEMS_AXES.isTagged(type)
+                || Tag.ITEMS_SHOVELS.isTagged(type)
+                || type.name().endsWith("_SPAWN_EGG")
+                || BLOCK_MODIFYING_ITEMS.contains(type);
     }
 
     /**
@@ -358,6 +382,13 @@ final class BehaviorListener implements Listener {
             }
             if (container.isLocked() && !player.hasPermission("mikuvanish.bypass.lock")) {
                 // 上锁容器仍走原版权限判定，交还原版处理。
+                return null;
+            }
+            // 尚未填充的战利品容器交还原版：手动 openInventory 不会走原版「首次开启生成战利品」
+            // 的流程，直接静默打开会给玩家一个空箱子。等原版完成首次开启（战利品已生成）后，
+            // 后续交互即可正常静默。
+            if (container instanceof LootableInventory lootable
+                    && lootable.hasLootTable() && !lootable.hasBeenFilled()) {
                 return null;
             }
             // 方块已放置时 getInventory() 返回世界中的真实库存（大箱子会合并两半），

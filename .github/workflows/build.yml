@@ -39,7 +39,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            MikuVanish-*.jar \
-            --title "MikuVanish ${GITHUB_REF_NAME}" \
-            --generate-notes
+          # 更新日志取自「打标签的那个提交」的正文（即发版提交的 message）。
+          # git 会剥掉标题行，--format=%b 拿到的正是结构化正文；正文为空时回退到自动生成。
+          NOTES_FILE="$(mktemp)"
+          git log -1 --format=%b HEAD > "${NOTES_FILE}"
+          if [ -s "${NOTES_FILE}" ]; then
+            gh release create "${GITHUB_REF_NAME}" \
+              MikuVanish-*.jar \
+              --title "MikuVanish ${GITHUB_REF_NAME}" \
+              --notes-file "${NOTES_FILE}"
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              MikuVanish-*.jar \
+              --title "MikuVanish ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

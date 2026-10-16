@@ -25,6 +25,8 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
     private VanishManager manager;
     private SyncBridge sync;
     private BehaviorConfig behaviorConfig;
+    /** TAB 集成的注销回调；未安装 TAB 时为 {@code null}。 */
+    private Runnable tabUnregister;
 
     @Override
     public void onEnable() {
@@ -47,7 +49,7 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
 
         // TAB 兼容：注册 VanishIntegration（需在 paper-plugin.yml 中声明 join-classpath 才能访问 TAB-API）。
         if (Bukkit.getPluginManager().getPlugin("TAB") != null) {
-            TabIntegration.register(manager);
+            this.tabUnregister = TabIntegration.register(manager);
             getLogger().info("[MikuVanish] 已接入 TAB 隐身集成。");
         }
 
@@ -76,6 +78,17 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
 
     @Override
     public void onDisable() {
+        // 先注销 TAB 集成：本插件声明 TAB 为 load: BEFORE，停用时本插件先于 TAB 关闭，
+        // 此时主动注销可从 TAB 的处理器列表中移除，避免 TAB 在后续流程中回调到已停用的本插件。
+        if (tabUnregister != null) {
+            try {
+                tabUnregister.run();
+            } catch (RuntimeException | LinkageError e) {
+                // TAB 已先行卸载时其 API 类不可解析（NoClassDefFoundError），忽略即可。
+                getLogger().warning("[MikuVanish] 注销 TAB 集成失败：" + e.getMessage());
+            }
+            tabUnregister = null;
+        }
         // 直接同步恢复所有可见性、碰撞与 metadata（禁用期间调度器不再执行本插件任务）。
         manager.restoreAll();
         sync.unregister();

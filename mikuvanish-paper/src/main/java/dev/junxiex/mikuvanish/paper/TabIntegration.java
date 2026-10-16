@@ -18,8 +18,16 @@ final class TabIntegration {
     private TabIntegration() {
     }
 
-    static void register(VanishManager manager) {
-        new Integration(manager).register();
+    /**
+     * 注册集成并返回一个「注销」回调。
+     *
+     * <p>返回 {@link Runnable} 而非 TAB 类型，是为了让主类在 {@code onDisable} 中调用注销时
+     * 不引用任何 TAB-API 类：未安装 TAB 时主类不会因此触发类加载失败（本类只在 TAB 存在时才被加载）。</p>
+     */
+    static Runnable register(VanishManager manager) {
+        Integration integration = new Integration(manager);
+        integration.register();
+        return integration::unregister;
     }
 
     private static final class Integration extends VanishIntegration {

@@ -7,8 +7,10 @@ import dev.junxiex.mikuvanish.paper.event.PlayerVanishEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.metadata.FixedMetadataValue;
+import org.bukkit.plugin.IllegalPluginAccessException;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,6 +56,23 @@ final class VanishManager {
     }
 
     /**
+     * 当前处于隐身的玩家用户名（仅读镜像，不触碰任何实体状态）。
+     *
+     * <p>供异步场景使用（如 tab 补全过滤事件可能在异步线程触发）：只遍历
+     * {@code ConcurrentHashMap} 并读取记录里的用户名字符串，不做 {@code Bukkit.getPlayer}
+     * 等跨线程不安全的实体查询。</p>
+     */
+    Set<String> vanishedNames() {
+        Set<String> names = new HashSet<>();
+        for (VanishState s : mirror.values()) {
+            if (s.vanished() && !s.username().isEmpty()) {
+                names.add(s.username());
+            }
+        }
+        return names;
+    }
+
+    /**
      * 接收状态更新（来自代理推送或本地切换）：先在调用线程立即写入镜像，
      * 再把「遍历在线玩家并应用可见性」调度到全局 region 线程。
      *
@@ -70,7 +89,13 @@ final class VanishManager {
             // 避免镜像随网络规模与运行时长无谓增长。
             mirror.remove(state.uuid(), state);
         }
-        Bukkit.getGlobalRegionScheduler().execute(plugin, () -> applyState(state, previous));
+        try {
+            Bukkit.getGlobalRegionScheduler().execute(plugin, () -> applyState(state, previous));
+        } catch (IllegalPluginAccessException e) {
+            // 停用瞬间调度器会拒绝新任务。代理的广播仍可能在这时经 netty 到达本服，
+            // 此时无需再应用可见性（onDisable 已统一恢复），静默丢弃即可。
+            plugin.getLogger().fine("[MikuVanish] 插件停用期间收到状态更新，已忽略。");
+        }
     }
 
     /**
@@ -168,16 +193,23 @@ final class VanishManager {
             if (target == null) {
                 continue;
             }
-            for (Player viewer : Bukkit.getOnlinePlayers()) {
-                if (!viewer.equals(target)) {
-                    viewer.showPlayer(plugin, target);
+            try {
+                for (Player viewer : Bukkit.getOnlinePlayers()) {
+                    if (!viewer.equals(target)) {
+                        viewer.showPlayer(plugin, target);
+                    }
                 }
+                if (target.hasMetadata("vanished")) {
+                    target.removeMetadata("vanished", plugin);
+                }
+                target.setCollidable(true);
+                target.setSleepingIgnored(false);
+            } catch (RuntimeException e) {
+                // 关服/停用流程中实体可能已被移除，跨 region 访问在 Folia 下也会抛异常。
+                // 单个玩家恢复失败不应中断其余玩家与调用方的后续清理（注销通道、API）。
+                plugin.getLogger().warning("[MikuVanish] 恢复 " + target.getName()
+                        + " 的可见性失败：" + e.getMessage());
             }
-            if (target.hasMetadata("vanished")) {
-                target.removeMetadata("vanished", plugin);
-            }
-            target.setCollidable(true);
-            target.setSleepingIgnored(false);
         }
     }
 
