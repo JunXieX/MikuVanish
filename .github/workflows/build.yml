@@ -39,6 +39,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 已存在同名 Release 时直接跳过：重新打标/重跑工作流属正常操作，不应判为失败。
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} 已存在，跳过发布。"
+            exit 0
+          fi
           # 更新日志取自「打标签的那个提交」的正文（即发版提交的 message）。
           # git 会剥掉标题行，--format=%b 拿到的正是结构化正文；正文为空时回退到自动生成。
           NOTES_FILE="$(mktemp)"
