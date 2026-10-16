@@ -1,6 +1,7 @@
 package dev.junxiex.mikuvanish.paper;
 
 import com.destroystokyo.paper.event.player.PlayerLaunchProjectileEvent;
+import com.destroystokyo.paper.event.player.PlayerPickupExperienceEvent;
 import com.destroystokyo.paper.loottable.LootableInventory;
 import dev.junxiex.mikuvanish.api.VanishState;
 import dev.junxiex.mikuvanish.api.VisibilityPolicy;
@@ -12,7 +13,6 @@ import org.bukkit.Material;
 import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
-import org.bukkit.block.Chest;
 import org.bukkit.block.Container;
 import org.bukkit.block.EnderChest;
 import org.bukkit.entity.Entity;
@@ -165,6 +165,21 @@ final class BehaviorListener implements Listener {
      */
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onPickupArrow(PlayerPickupArrowEvent event) {
+        if (config.pickup() && manager.isVanished(event.getPlayer().getUniqueId())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * 拾取经验球。
+     *
+     * <p>经验球不是 {@code Item} 实体，走 {@code ExperienceOrb} 自己的拾取流程，
+     * 只触发 {@link PlayerPickupExperienceEvent}，<b>不会</b>触发 {@link EntityPickupItemEvent}。
+     * 若不一并拦截，隐身者经过时经验球会径直飞向他，周围玩家看到「经验球飘向空气」
+     * 即可判定此处有人，与 {@code pickup} 的防暴露意图不符。</p>
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPickupExperience(PlayerPickupExperienceEvent event) {
         if (config.pickup() && manager.isVanished(event.getPlayer().getUniqueId())) {
             event.setCancelled(true);
         }
@@ -356,8 +371,10 @@ final class BehaviorListener implements Listener {
      * 手动 {@code openInventory} 真实库存，玩家仍可正常查看/操作，仅缺失他人可感知的痕迹。
      * 比较器信号反映容器内容物、与是否开启无关，故不受影响。</p>
      *
-     * <p>被上方方块遮挡的箱子/末影箱返回 {@code null} 交还原版：原版同样拒绝打开
-     * （{@code isBlocked()} 复刻了原版判定），这样不会绕过原版的开启限制。</p>
+     * <p><b>无视遮挡（观察者式）</b>：原版会拒绝打开上方有实心方块或坐着一只猫的箱子/末影箱
+     * （{@code isBlocked()}）。这里刻意不做该判定——手动开启本就不走原版 {@code use()} 路径，
+     * 因此可以像旁观者一样直接打开被遮挡的容器，且同样不产生任何可被他人察觉的痕迹。
+     * 被遮挡的箱子往往正是「藏东西」的位置，能直接打开更符合整蛊场景。</p>
      *
      * @param state 调用方已取的方块状态（避免重复生成快照）
      * @return 命中可静默打开的容器时返回其库存，否则 {@code null}（交还原版处理）
@@ -369,19 +386,13 @@ final class BehaviorListener implements Listener {
                 || player.getInventory().getItemInOffHand().getType() != Material.AIR)) {
             return null;
         }
-        if (state instanceof EnderChest enderChest) {
-            if (enderChest.isBlocked()) {
-                return null;
-            }
-            // 末影箱库存为玩家私有共享，不来自方块容器。
+        if (state instanceof EnderChest) {
+            // 末影箱库存为玩家私有共享，不来自方块容器；无视上方遮挡直接打开。
             return player.getEnderChest();
         }
         if (state instanceof Container container) {
-            if (container instanceof Chest chest && chest.isBlocked()) {
-                return null;
-            }
             if (container.isLocked() && !player.hasPermission("mikuvanish.bypass.lock")) {
-                // 上锁容器仍走原版权限判定，交还原版处理。
+                // 上锁容器仍走原版权限判定，交还原版处理（这是权限问题，非遮挡问题）。
                 return null;
             }
             // 尚未填充的战利品容器交还原版：手动 openInventory 不会走原版「首次开启生成战利品」

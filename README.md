@@ -65,7 +65,7 @@ MikuMC系列插件交流群：1105054380
 | --- | --- | --- |
 | `prevent.chat` | `true` | 隐身时禁止发言（消息以 `!` 开头可临时绕过） |
 | `prevent.damage` | `true` | 玩家之间的双向伤害（含投射物）；环境与怪物伤害不受限制 |
-| `prevent.pickup` | `true` | 禁止拾取物品 |
+| `prevent.pickup` | `true` | 禁止拾取物品（含箭矢与经验球） |
 | `prevent.drop` | `true` | 禁止丢弃物品 |
 | `prevent.target` | `true` | 清除怪物对隐身者的索敌 |
 | `prevent.announcements` | `true` | 隐藏死亡消息、成就公告与袭击触发 |
@@ -75,7 +75,7 @@ MikuMC系列插件交流群：1105054380
 | `prevent.entity-interact` | `false` | 禁止右键实体（骑乘、驯服、拴绳、剪羊毛等） |
 | `prevent.world-interact` | `false` | 禁止其它可被察觉的世界交互（桶、射击、投掷物、钓鱼、音符盒等） |
 | `prevent.block-modify` | `false` | 禁止会改变方块外观的交互（蛋糕、告示牌、花盆、锄地、去皮等） |
-| `silent-container` | `true` | 隐身者开箱不产生开启动画与音效（仍可正常存取物品） |
+| `silent-container` | `true` | 隐身者开箱不产生开启动画与音效（仍可正常存取物品）；可无视遮挡打开被压住的箱子与末影箱 |
 
 ## 注意事项
 
