@@ -75,7 +75,7 @@ MikuMC系列插件交流群：1105054380
 | `prevent.entity-interact` | `false` | 禁止右键实体（骑乘、驯服、拴绳、剪羊毛等） |
 | `prevent.world-interact` | `false` | 禁止其它可被察觉的世界交互（桶、射击、投掷物、钓鱼、音符盒等） |
 | `prevent.block-modify` | `false` | 禁止会改变方块外观的交互（蛋糕、告示牌、花盆、锄地、去皮等） |
-| `silent-container` | `true` | 隐身者开箱不产生开启动画与音效（仍可正常存取物品）；可无视遮挡打开被压住的箱子与末影箱 |
+| `silent-container` | `true` | 隐身者开箱不产生开启动画、音效与容器开启事件（仍可正常存取物品）；可无视遮挡打开被压住的箱子与末影箱 |
 
 ## 注意事项
 

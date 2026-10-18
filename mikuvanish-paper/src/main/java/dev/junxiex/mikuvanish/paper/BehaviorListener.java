@@ -94,10 +94,12 @@ final class BehaviorListener implements Listener {
 
     private final VanishManager manager;
     private final BehaviorConfig config;
+    private final SilentContainer silentContainer;
 
-    BehaviorListener(VanishManager manager, BehaviorConfig config) {
+    BehaviorListener(VanishManager manager, BehaviorConfig config, SilentContainer silentContainer) {
         this.manager = manager;
         this.config = config;
+        this.silentContainer = silentContainer;
     }
 
     // ---- 聊天 ----
@@ -281,12 +283,14 @@ final class BehaviorListener implements Listener {
         if (block == null) {
             return;
         }
-        // 方块状态只在需要时取一次（带方块实体的方块会生成快照，不算廉价）。
+        // 方块状态只在需要时取一次。使用 useSnapshot=false：容器判定只需读取实时方块实体
+        // （{@code instanceof}、{@code isLocked}、战利品表状态），而快照会把整个容器内容
+        // 序列化再反序列化一遍——27 格箱子会克隆全部物品，且一次右键会触发主/副手两次事件。
         boolean needState = config.silentContainer() || config.blockModify();
-        BlockState state = needState ? block.getState() : null;
+        BlockState state = needState ? block.getState(false) : null;
         Material type = block.getType();
 
-        // 静默容器：可正常打开箱子/木桶/潜影盒/漏斗/末影箱，但不产生开启动画与音效。
+        // 静默容器：可正常打开箱子/木桶/潜影盒/漏斗/熔炉/末影箱，但不产生开启动画与音效。
         // 一次右键会对主手、副手各触发一次本事件，两手都要取消（阻止原版 use() 产生痕迹），
         // 但库存只在主手打开一次。
         if (config.silentContainer()) {
@@ -294,7 +298,7 @@ final class BehaviorListener implements Listener {
             if (container != null) {
                 event.setCancelled(true);
                 if (event.getHand() == EquipmentSlot.HAND) {
-                    player.openInventory(container);
+                    silentContainer.open(player, container);
                 }
                 return;
             }
@@ -366,10 +370,10 @@ final class BehaviorListener implements Listener {
     /**
      * 解析可静默打开的容器库存。
      *
-     * <p>原理：取消 {@code PlayerInteractEvent} 后原版不会执行容器的 {@code use} 逻辑
-     * （即不增加「开启计数」），因此不会向周围玩家广播开启动画、不播放音效；随后由调用方
-     * 手动 {@code openInventory} 真实库存，玩家仍可正常查看/操作，仅缺失他人可感知的痕迹。
-     * 比较器信号反映容器内容物、与是否开启无关，故不受影响。</p>
+     * <p>原理：取消 {@code PlayerInteractEvent} 后原版不会执行容器的 {@code use} 逻辑，
+     * 再由 {@link SilentContainer} 以「临时旁观者」身份真实打开容器——原版对旁观者不计数，
+     * 因此不会广播开启动画、不播放音效、也不产生幽匿感测体可感知的 {@code CONTAINER_OPEN}。
+     * 玩家仍可正常查看/操作真实库存。比较器信号反映容器内容物、与是否开启无关，故不受影响。</p>
      *
      * <p><b>无视遮挡（观察者式）</b>：原版会拒绝打开上方有实心方块或坐着一只猫的箱子/末影箱
      * （{@code isBlocked()}）。这里刻意不做该判定——手动开启本就不走原版 {@code use()} 路径，
