@@ -25,6 +25,7 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
     private VanishManager manager;
     private SyncBridge sync;
     private BehaviorConfig behaviorConfig;
+    private SilentContainer silentContainer;
     /** TAB 集成的注销回调；未安装 TAB 时为 {@code null}。 */
     private Runnable tabUnregister;
 
@@ -33,11 +34,14 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
         this.behaviorConfig = new BehaviorConfig(this);
         this.manager = new VanishManager(this);
         this.sync = new SyncBridge(this, manager);
+        this.silentContainer = new SilentContainer(this);
         this.sync.register();
         MikuVanishAPI.register(this);
 
         Bukkit.getPluginManager().registerEvents(new VanishListener(this), this);
-        Bukkit.getPluginManager().registerEvents(new BehaviorListener(manager, behaviorConfig), this);
+        Bukkit.getPluginManager().registerEvents(
+                new BehaviorListener(manager, behaviorConfig, silentContainer), this);
+        Bukkit.getPluginManager().registerEvents(silentContainer, this);
 
         // 命令走 Paper 原生的 Brigadier + 生命周期注册（重新加载时自动重注册）。
         // 权限由命令树自身的 requires 判定，描述符不声明 commands。
@@ -91,6 +95,10 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
         }
         // 直接同步恢复所有可见性、碰撞与 metadata（禁用期间调度器不再执行本插件任务）。
         manager.restoreAll();
+        // 停用后调度器不再执行任务，待还原的旁观者身份必须当场还原。
+        if (silentContainer != null) {
+            silentContainer.shutdown();
+        }
         sync.unregister();
         MikuVanishAPI.unregister();
     }
