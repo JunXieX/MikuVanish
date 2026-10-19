@@ -30,6 +30,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: MikuVanish
+          retention-days: 1
           path: MikuVanish-*.jar
           if-no-files-found: error
 
