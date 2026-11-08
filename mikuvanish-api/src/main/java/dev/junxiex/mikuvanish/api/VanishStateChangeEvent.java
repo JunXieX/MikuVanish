@@ -6,8 +6,9 @@ import java.util.UUID;
 /**
  * 玩家隐身状态翻转事件：仅在 vanished 布尔值翻转时由代理端发布。
  *
- * <p>代理端通过 Velocity 事件总线发布（纯 POJO，Velocity 事件无需实现接口）；
- * 跨服移动、首次建立状态记录均不发布。</p>
+ * <p>代理端通过 Velocity 事件总线发布（纯 POJO，Velocity 事件无需实现接口）。
+ * 跨服移动不发布；首次建档时若记录本身即为隐身（对离线玩家预设隐身、后端上报先于
+ * 本地记录到达），按「此前未隐身」处理，会发布一次。</p>
  */
 public final class VanishStateChangeEvent {
 

@@ -17,9 +17,6 @@ import java.util.UUID;
  */
 final class SyncBridge implements PluginMessageListener {
 
-    /** 是否运行于 Folia。Paper 下「实体线程」即主线程，可直接内联执行。 */
-    private static final boolean FOLIA = MikuVanishPaper.isFolia();
-
     private final MikuVanishPaper plugin;
     private final VanishManager manager;
 
@@ -40,7 +37,7 @@ final class SyncBridge implements PluginMessageListener {
 
     /** 向代理握手，请求全量隐身快照。Bukkit 的出口必须借用一个在线玩家；无人在线时跳过。 */
     void sendHello() {
-        send(null, SyncProtocol.Message.hello(""));
+        send(routePlayer(null), SyncProtocol.Message.hello());
     }
 
     /** 后端本地切换后回报代理。优先用目标玩家作为出口（保证消息一定可达）。 */
@@ -48,13 +45,14 @@ final class SyncBridge implements PluginMessageListener {
         // 调用方可能是玩家 region 线程（Folia 命令），遍历在线玩家需切到全局 region
         // （Bukkit.getOnlinePlayers 在异步/其它 region 线程上迭代不安全）。
         Bukkit.getGlobalRegionScheduler().execute(plugin, () -> {
-            if (routePlayer(state.uuid()) == null) {
+            Player outlet = routePlayer(state.uuid());
+            if (outlet == null) {
                 // Bukkit 没有"服务端 -> 代理"的出口，必须借用一个在线玩家；
                 // 一个都没有时消息发不出去，记一条警告便于排查（代理不会收到本次变更）。
                 plugin.getLogger().warning("[MikuVanish] 无在线玩家可用于上报隐身状态，本次变更未同步到代理。");
                 return;
             }
-            send(state.uuid(), SyncProtocol.Message.stateUpdate(state));
+            send(outlet, SyncProtocol.Message.stateUpdate(state));
             // 仅走 fine：管理员频繁切换隐身时不刷屏（默认不输出，服务端可自行开启调试）。
             plugin.getLogger().fine("[MikuVanish] 已上报状态到代理："
                     + (state.username().isEmpty() ? state.uuid() : state.username())
@@ -73,8 +71,7 @@ final class SyncBridge implements PluginMessageListener {
      * <p>调度到玩家线程前不读任何实体状态，只做「挑选出口玩家」这一步；{@code getOnlinePlayers}
      * 的迭代始终发生在调用方所在线程（Paper 主线程 / Folia 全局 region），保证安全。</p>
      */
-    private void send(UUID preferred, SyncProtocol.Message msg) {
-        Player outlet = routePlayer(preferred);
+    private void send(Player outlet, SyncProtocol.Message msg) {
         if (outlet == null) {
             return;
         }
@@ -90,7 +87,7 @@ final class SyncBridge implements PluginMessageListener {
 
     /** 在玩家所属线程执行（Folia 经实体调度器，Paper 直接内联）。 */
     private void runOnPlayer(Player player, Runnable operation) {
-        if (FOLIA) {
+        if (MikuVanishPaper.FOLIA) {
             player.getScheduler().execute(plugin, operation, null, 0L);
         } else {
             operation.run();

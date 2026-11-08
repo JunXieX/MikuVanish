@@ -33,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,8 +59,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 )
 public final class MikuVanishVelocity implements VanishService {
 
-    static final MinecraftChannelIdentifier CHANNEL =
-            MinecraftChannelIdentifier.create("mikuvanish", "sync");
+    /** 与后端共用同一份通道名字面量，避免两侧各写一份导致收发静默失配。 */
+    static final MinecraftChannelIdentifier CHANNEL = MinecraftChannelIdentifier.from(SyncProtocol.CHANNEL);
 
     /** 脏标记：状态变更后置位，由周期任务落盘，避免在事件线程同步写文件。 */
     private final AtomicBoolean dirty = new AtomicBoolean();
@@ -130,14 +131,14 @@ public final class MikuVanishVelocity implements VanishService {
     /**
      * 玩家即将进入后端时提前推送其隐身状态。
      *
-     * <p>在连接建立前推送，保证后端在 {@code PlayerJoinEvent} 触发时已持有该玩家的
-     * 正确隐身状态——依赖本插件隐身状态的其它插件（如消息抑制插件）因此能在 join
-     * 事件里同步查询到准确结果。</p>
+     * <p>在连接建立前推送，**尽力**让后端在 {@code PlayerJoinEvent} 触发时就已持有该玩家的
+     * 隐身状态，依赖隐身状态的其它插件（如消息抑制插件）因此多半能在 join 事件里查到准确结果。
+     * 这不是硬保证：目标后端当前无人在线时 {@code sendPluginMessage} 无处借道，消息会被丢弃，
+     * 此时由 {@link #onServerPostConnect} 在进服后补齐（进服瞬间最多有一个 tick 的空窗）。</p>
      *
      * <p>目标服务器取 {@code getResult().getServer()} 而非 {@code getOriginalServer()}：
-     * 选服/大厅等插件可在本事件里重定向连接，只有 result 里才是玩家真正要进入的服务器。
-     * 使用原始服务器会把状态推给一个玩家不会进入的服务器，导致目标后端在 join 时拿不到
-     * 隐身状态，破坏上述时序保证。</p>
+     * 选服/大厅等插件可在本事件里重定向连接，只有 result 里才是玩家真正要进入的服务器；
+     * 用原始服务器会把状态推给一个玩家不会进入的后端。</p>
      */
     @Subscribe
     public void onServerPreConnect(ServerPreConnectEvent event) {
@@ -157,7 +158,7 @@ public final class MikuVanishVelocity implements VanishService {
      * 玩家完成后端连接后推送其状态。
      *
      * <p>使用 {@link ServerPostConnectEvent}（后端 join 流程已结束）而非
-     * ServerConnectedEvent，保证后端镜像先有玩家记录、推送到达时立即生效。</p>
+     * ServerConnectedEvent：此时后端已有该玩家的镜像记录，推送到达即可立即生效。</p>
      */
     @Subscribe
     public void onServerPostConnect(ServerPostConnectEvent event) {
@@ -214,11 +215,15 @@ public final class MikuVanishVelocity implements VanishService {
         if (vanished == 0) {
             return;
         }
+        // 人数以代理全网在线数为基线：开启 ping-passthrough 时 players.getOnline() 是单个后端的人数，
+        // 而这里的 vanished 是全网隐身数，两者相减会得到无意义的数字。
         ServerPing.Builder builder = ping.asBuilder()
-                .onlinePlayers(Math.max(0, players.getOnline() - vanished));
+                .onlinePlayers(Math.max(0, proxy.getPlayerCount() - vanished));
         List<ServerPing.SamplePlayer> sample = players.getSample();
         if (sample != null && !sample.isEmpty()) {
-            builder.samplePlayers(sample.stream()
+            // asBuilder() 已把原样例拷进 builder，而 samplePlayers(...) 是追加：不先清空的话
+            // 隐身者仍留在样例里，未隐身者还会重复一份。
+            builder.clearSamplePlayers().samplePlayers(sample.stream()
                     .filter(s -> !isVanished(s.getId()))
                     .toList());
         }
@@ -284,8 +289,11 @@ public final class MikuVanishVelocity implements VanishService {
     // ---- 命令调用入口 ----
 
     /**
-     * 统一的状态落库 + 广播入口（所有权威变更路径都经此）：
-     * vanished 翻转时发布 {@link VanishStateChangeEvent}。
+     * 权威状态写入：置脏（由周期任务落盘）、广播全网，并在 vanished 翻转时发布
+     * {@link VanishStateChangeEvent}。
+     *
+     * <p>命令与后端上报都经此。跨服移动只更新所在服务器、不算状态变更，
+     * 由 {@link #onServerPostConnect} 直接广播，避免误发翻转事件。</p>
      */
     private void applyState(VanishState state) {
         VanishState previous = states.put(state.uuid(), state);
@@ -340,7 +348,13 @@ public final class MikuVanishVelocity implements VanishService {
 
     @Override
     public Set<UUID> getVanishedPlayers() {
-        return Set.copyOf(states.keySet().stream().filter(this::isVanished).toList());
+        Set<UUID> result = new HashSet<>();
+        for (VanishState state : states.values()) {
+            if (state.vanished()) {
+                result.add(state.uuid());
+            }
+        }
+        return Set.copyOf(result);
     }
 
     @Override
@@ -375,8 +389,8 @@ public final class MikuVanishVelocity implements VanishService {
             List<VanishState> list = gson.fromJson(json, type);
             if (list != null) {
                 for (VanishState s : list) {
-                    // 只接受隐身记录（与落盘契约一致），并跳过损坏/不完整条目，
-                    // 避免一个损坏的 JSON 条目导致插件启用失败。
+                    // 只接受隐身记录（与落盘契约一致）。单条结构损坏会在解析阶段整体失败，
+                    // 由外层捕获：忽略整份文件，插件照常启用，后续变更会重写该文件。
                     if (s != null && s.vanished()) {
                         states.put(s.uuid(), s);
                     }
@@ -387,8 +401,13 @@ public final class MikuVanishVelocity implements VanishService {
         }
     }
 
-    /** 仅在脏时落盘（由周期任务与关闭钩子调用）。原子写入，避免崩溃时留下半截文件。 */
-    private void saveIfDirty() {
+    /**
+     * 仅在脏时落盘（由周期任务与关闭钩子调用）。原子写入，避免崩溃时留下半截文件。
+     *
+     * <p>方法级同步是关服定序的一部分：关闭钩子必须等在途写入结束后再落一次，
+     * 否则最后一次变更可能随进程退出而丢失。</p>
+     */
+    private synchronized void saveIfDirty() {
         if (!dirty.compareAndSet(true, false)) {
             return;
         }

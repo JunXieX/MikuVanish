@@ -78,6 +78,7 @@ final class BehaviorListener implements Listener {
             Material.CAKE, Material.COMPOSTER, Material.TNT, Material.RESPAWN_ANCHOR,
             Material.CHISELED_BOOKSHELF, Material.DRAGON_EGG, Material.LECTERN,
             Material.SWEET_BERRY_BUSH, Material.CAVE_VINES, Material.CAVE_VINES_PLANT,
+            // 右键（use）会让红石矿发光并播放粒子，属可见痕迹。
             Material.REDSTONE_ORE, Material.DEEPSLATE_REDSTONE_ORE);
 
     /**
@@ -259,7 +260,10 @@ final class BehaviorListener implements Listener {
 
     // ---- 方块交互：静默容器 / 红石设备 / 发声方块 / 可感知的方块改动 ----
 
-    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    // 静默开箱必须在事件里当场打开界面，所以注册在 HIGHEST：让区域保护类插件（通常注册在
+    // NORMAL/HIGH，且带 ignoreCancelled）先跑完判定。若它们取消，本方法直接跳过（ignoreCancelled），
+    // 原版也不会执行；若无人取消，HIGHEST 上取消同样能挡住原版 use()。
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         if (!manager.isVanished(player.getUniqueId())) {

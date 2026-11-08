@@ -17,17 +17,18 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.server.ServerListPingEvent;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * 玩家进出、世界切换与服务端列表事件处理。
  *
- * <p>隐身状态的权威在代理：玩家进服前代理会经 PreConnect 预推送隐身状态，
- * 因此后端在 {@code PlayerJoinEvent} 触发时已持有正确状态，依赖隐身状态的其它插件
- * （如消息抑制插件）可在此同步查询到准确结果。进出服消息的抑制本身不在本插件职责内。</p>
+ * <p>隐身状态的权威在代理：玩家进服前代理会尽力经 PreConnect 预推送隐身状态，
+ * 因此后端在 {@code PlayerJoinEvent} 触发时通常已持有正确状态，依赖隐身状态的其它插件
+ * （如消息抑制插件）多半能在此同步查到结果。首个进入空服的隐身玩家存在最多一个 tick 的
+ * 空窗，由 PostConnect 补齐。进出服消息的抑制本身不在本插件职责内。</p>
  */
 final class VanishListener implements Listener {
 
@@ -68,7 +69,10 @@ final class VanishListener implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onRespawn(PlayerRespawnEvent event) {
-        plugin.manager().reapplyTarget(event.getPlayer().getUniqueId());
+        // 重生事件先于新实体创建触发：此刻的 Player 仍指向旧实体，直接写 metadata/碰撞/睡觉标记
+        // 会随旧实体一起被丢弃。必须等下一 tick 再施加（reapplyTarget 在其它路径上是当场执行的）。
+        UUID id = event.getPlayer().getUniqueId();
+        plugin.getServer().getGlobalRegionScheduler().execute(plugin, () -> plugin.manager().reapplyTarget(id));
     }
 
     /**
@@ -79,28 +83,15 @@ final class VanishListener implements Listener {
      */
     @EventHandler(priority = EventPriority.LOW)
     public void onPing(ServerListPingEvent event) {
-        int vanished = countVanishedOnline();
+        int vanished = plugin.manager().vanishedPlayers().size();
         if (vanished == 0) {
             return;
         }
         if (event instanceof PaperServerListPingEvent paper) {
             paper.setNumPlayers(Math.max(0, paper.getNumPlayers() - vanished));
-            try {
-                paper.getListedPlayers().removeIf(info -> plugin.manager().isVanished(info.id()));
-            } catch (UnsupportedOperationException ignored) {
-                // 某些实现返回不可变列表，忽略 sample 清理（人数已修正）。
-            }
+            // 每个隐身者对应一条样例，与人数扣除保持同一口径。
+            paper.getListedPlayers().removeIf(info -> plugin.manager().isVanished(info.id()));
         }
-    }
-
-    private int countVanishedOnline() {
-        int n = 0;
-        for (Player p : plugin.getServer().getOnlinePlayers()) {
-            if (plugin.manager().isVanished(p.getUniqueId())) {
-                n++;
-            }
-        }
-        return n;
     }
 
     /**
@@ -126,21 +117,17 @@ final class VanishListener implements Listener {
         if (Bukkit.isOwnedByCurrentRegion(viewer) && viewer.hasPermission(VisibilityPolicy.SEE_BASE)) {
             return;
         }
-        Set<String> vanished = plugin.manager().vanishedNames();
+        // 名单已在镜像侧归一为小写（tab 补全每次按键都会触发，避免在这里重复建集合）。
+        Set<String> vanished = plugin.manager().vanishedLowerNames();
         if (vanished.isEmpty()) {
             return;
-        }
-        // 预先归一为小写集合，避免对每条建议重复做大小写不敏感比较（tab 补全每次按键都会触发）。
-        Set<String> lowered = new HashSet<>(vanished.size() * 2);
-        for (String name : vanished) {
-            lowered.add(name.toLowerCase(Locale.ROOT));
         }
         String self = viewer.getName().toLowerCase(Locale.ROOT);
         List<Suggestion> kept = new ArrayList<>(original.size());
         for (Suggestion suggestion : original) {
             String text = suggestion.getText().toLowerCase(Locale.ROOT);
             // 自身名总是保留（隐身者本人查询自己），其余按隐身名单剔除。
-            if (text.equals(self) || !lowered.contains(text)) {
+            if (text.equals(self) || !vanished.contains(text)) {
                 kept.add(suggestion);
             }
         }

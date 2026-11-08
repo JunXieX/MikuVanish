@@ -11,7 +11,13 @@ import java.util.UUID;
  */
 public interface VanishService {
 
-    /** 目标玩家当前是否处于隐身（未知玩家返回 false）。 */
+    /**
+     * 目标玩家当前是否处于隐身（未知玩家返回 false）。
+     *
+     * <p>后端口径是镜像：本服在线玩家，以及为「重连后继续隐身」保留的记录。
+     * 因此对不在本服的隐身玩家也可能返回 {@code true}，与 {@link #getVanishedPlayers()}
+     * 的在线口径不同。</p>
+     */
     boolean isVanished(UUID player);
 
     /**
@@ -22,7 +28,7 @@ public interface VanishService {
      */
     Set<UUID> getVanishedPlayers();
 
-    /** 获取状态记录，未知玩家返回 {@code null}。 */
+    /** 获取状态记录，未知玩家返回 {@code null}；口径同 {@link #isVanished}，可能是在本服之外的记录。 */
     VanishState getState(UUID player);
 
     /**

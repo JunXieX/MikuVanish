@@ -14,8 +14,8 @@ import java.util.UUID;
  * 异步线程请先切回 tick 线程，因为内部会触发 Bukkit 事件）。代理端任意线程调用均可。</p>
  *
  * <pre>{@code
- * if (MikuVanishAPI.isAvailable() && MikuVanishAPI.get().isVanished(uuid)) { ... }
- * MikuVanishAPI.get().setVanished(uuid, true, 2);
+ * if (MikuVanishAPI.isAvailable() && MikuVanishAPI.isVanished(uuid)) { ... }
+ * MikuVanishAPI.setVanished(uuid, true);
  * }</pre>
  */
 public final class MikuVanishAPI {

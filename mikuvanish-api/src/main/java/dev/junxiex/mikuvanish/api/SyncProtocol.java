@@ -35,8 +35,9 @@ public final class SyncProtocol {
     /** 解码后的消息。 */
     public record Message(byte op, String serverId, VanishState state) {
 
-        public static Message hello(String serverId) {
-            return new Message(OP_HELLO, serverId, null);
+        /** 握手消息不带载荷：目标服务器由代理按消息来源连接识别。 */
+        public static Message hello() {
+            return new Message(OP_HELLO, "", null);
         }
 
         public static Message stateUpdate(VanishState state) {
@@ -55,7 +56,7 @@ public final class SyncProtocol {
             out.writeByte(msg.op());
             out.writeByte(PROTOCOL_VERSION);
             switch (msg.op()) {
-                case OP_HELLO, OP_SYNC_COMPLETE -> out.writeUTF(nullSafe(msg.serverId()));
+                case OP_HELLO, OP_SYNC_COMPLETE -> out.writeUTF(msg.serverId());
                 case OP_STATE_UPDATE -> {
                     VanishState s = msg.state();
                     out.writeUTF(s.uuid().toString());
@@ -99,9 +100,5 @@ public final class SyncProtocol {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-    }
-
-    private static String nullSafe(String s) {
-        return s == null ? "" : s;
     }
 }

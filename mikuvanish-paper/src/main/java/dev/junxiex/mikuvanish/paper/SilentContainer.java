@@ -7,6 +7,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
@@ -33,15 +34,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code setGameMode}，既不发送游戏模式数据包、也不触发
  * {@code PlayerGameModeChangeEvent}，客户端全程无感。</p>
  *
- * <p>与 OpenInv 的 SilentContainer 同源：使用真实库存，物品编辑直接落盘，大箱子自动合并两半；
- * 不需要协议库，也没有镜像背包的物品复制风险。</p>
+ * <p>使用真实库存：物品编辑直接落盘，大箱子自动合并两半；不需要协议库，
+ * 也没有镜像背包的物品复制风险。</p>
  *
  * <p><b>降级</b>：反射不可用（服务端实现变更）时退化为普通 {@code openInventory}，
  * 容器仍能正常打开，只是会有开启音效，并在首次失败时记录警告。</p>
  */
 final class SilentContainer implements Listener {
-
-    private static final boolean FOLIA = MikuVanishPaper.isFolia();
 
     private final MikuVanishPaper plugin;
 
@@ -68,9 +67,9 @@ final class SilentContainer implements Listener {
         try {
             handleMethod = Class.forName("org.bukkit.craftbukkit.entity.CraftPlayer").getMethod("getHandle");
             Class<?> playerClass = Class.forName("net.minecraft.server.level.ServerPlayer");
-            modeField = findField(playerClass, "net.minecraft.server.level.ServerPlayerGameMode", "gameMode");
-            modeForPlayerField = findField(modeField.getType(), "net.minecraft.world.level.GameType",
-                    "gameModeForPlayer");
+            modeField = findField(playerClass, "gameMode", "net.minecraft.server.level.ServerPlayerGameMode");
+            modeForPlayerField = findField(modeField.getType(), "gameModeForPlayer",
+                    "net.minecraft.world.level.GameType");
             @SuppressWarnings({"unchecked", "rawtypes"})
             Class<? extends Enum> gameType = (Class<? extends Enum>) Class.forName("net.minecraft.world.level.GameType");
             spectatorMode = Enum.valueOf(gameType, "SPECTATOR");
@@ -89,39 +88,20 @@ final class SilentContainer implements Listener {
     }
 
     /**
-     * 按类型定位字段：优先使用已知名；缺失时仅在「同类字段中类型匹配且唯一」时采用。
+     * 按名字定位 NMS 字段，并校验其类型仍是预期含义。
      *
-     * <p>刻意不做「取第一个匹配项」的猜测：{@code ServerPlayerGameMode} 里
-     * {@code gameModeForPlayer} 与 {@code previousGameModeForPlayer} 类型相同，
-     * 猜错会直接写坏玩家的上一模式。宁可退化为普通开箱，也不冒这个风险。</p>
+     * <p>刻意不做「按类型猜测」的兜底：{@code ServerPlayerGameMode} 里
+     * {@code gameModeForPlayer} 与 {@code previousGameModeForPlayer} 类型相同，猜错会写坏
+     * 玩家的上一个模式。字段改名或改类型时直接抛异常，由构造器统一降级为普通开箱。</p>
      */
-    private static Field findField(Class<?> owner, String typeName, String preferredName)
-            throws NoSuchFieldException {
-        try {
-            Field field = owner.getDeclaredField(preferredName);
-            if (field.getType().getName().equals(typeName)) {
-                field.setAccessible(true);
-                return field;
-            }
-        } catch (NoSuchFieldException ignored) {
-            // 落到按类型查找。
+    private static Field findField(Class<?> owner, String name, String typeName) throws NoSuchFieldException {
+        Field field = owner.getDeclaredField(name);
+        if (!field.getType().getName().equals(typeName)) {
+            throw new NoSuchFieldException(owner.getName() + "." + name + " 类型已变更："
+                    + field.getType().getName());
         }
-        Field candidate = null;
-        for (Field field : owner.getDeclaredFields()) {
-            if (!field.getType().getName().equals(typeName)) {
-                continue;
-            }
-            if (candidate != null) {
-                throw new NoSuchFieldException(owner.getName() + " 中存在多个类型为 " + typeName
-                        + " 的字段，无法安全判定");
-            }
-            candidate = field;
-        }
-        if (candidate == null) {
-            throw new NoSuchFieldException(owner.getName() + " 中找不到类型为 " + typeName + " 的字段");
-        }
-        candidate.setAccessible(true);
-        return candidate;
+        field.setAccessible(true);
+        return field;
     }
 
     private boolean available() {
@@ -254,6 +234,18 @@ final class SilentContainer implements Listener {
         scheduleRestore(player, mode);
     }
 
+    /**
+     * 压制窗口内玩家被合法切换了游戏模式：撤销待还原，让真实变更生效。
+     *
+     * <p>本类写入游戏模式时绕过 {@code setGameMode}，因此该事件只会由外部变更触发。
+     * 若不撤销，下一 tick 的 {@code restore} 会把「字段仍是旁观者」误判成自己的写入，
+     * 把玩家改回旧模式，造成客户端与服务端模式错位。</p>
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onGameModeChange(PlayerGameModeChangeEvent event) {
+        pending.remove(event.getPlayer().getUniqueId());
+    }
+
     /** 玩家离线：立即还原，避免残留旁观者状态（离线后也不再需要压制关闭痕迹）。 */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
@@ -302,7 +294,7 @@ final class SilentContainer implements Listener {
             }
         };
         try {
-            if (FOLIA) {
+            if (MikuVanishPaper.FOLIA) {
                 player.getScheduler().execute(plugin, task, null, 0L);
             } else {
                 Bukkit.getScheduler().runTask(plugin, task);
@@ -314,15 +306,13 @@ final class SilentContainer implements Listener {
     }
 
     /** 还原游戏模式；仅当仍是旁观者时写入，避免覆盖期间的正常模式变更。 */
-    private boolean restore(Object mode, Object previous) {
+    private void restore(Object mode, Object previous) {
         try {
             if (gameModeForPlayer.get(mode) == spectator) {
                 gameModeForPlayer.set(mode, previous);
             }
-            return true;
         } catch (ReflectiveOperationException | RuntimeException e) {
             plugin.getLogger().severe("[MikuVanish] 还原游戏模式失败，玩家可能残留旁观者状态：" + e);
-            return false;
         }
     }
 

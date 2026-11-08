@@ -22,16 +22,18 @@ import java.util.UUID;
  */
 public final class MikuVanishPaper extends JavaPlugin implements VanishService {
 
+    /** 是否运行于 Folia：决定实体操作走 region 调度器还是当场内联。 */
+    static final boolean FOLIA = detectFolia();
+
     private VanishManager manager;
     private SyncBridge sync;
-    private BehaviorConfig behaviorConfig;
     private SilentContainer silentContainer;
     /** TAB 集成的注销回调；未安装 TAB 时为 {@code null}。 */
     private Runnable tabUnregister;
 
     @Override
     public void onEnable() {
-        this.behaviorConfig = new BehaviorConfig(this);
+        BehaviorConfig behaviorConfig = new BehaviorConfig(this);
         this.manager = new VanishManager(this);
         this.sync = new SyncBridge(this, manager);
         this.silentContainer = new SilentContainer(this);
@@ -53,8 +55,15 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
 
         // TAB 兼容：注册 VanishIntegration（需在 paper-plugin.yml 中声明 join-classpath 才能访问 TAB-API）。
         if (Bukkit.getPluginManager().getPlugin("TAB") != null) {
-            this.tabUnregister = TabIntegration.register(manager);
-            getLogger().info("[MikuVanish] 已接入 TAB 隐身集成。");
+            try {
+                this.tabUnregister = TabIntegration.register(manager);
+                getLogger().info("[MikuVanish] 已接入 TAB 隐身集成。");
+            } catch (RuntimeException | LinkageError e) {
+                // TAB 已安装但 API 不可用（版本漂移、其自身初始化失败）时不能连累整个后端不启用：
+                // 世界隐藏与命令仍要能工作，只是 TAB 的玩家列表不再跟随隐身状态。
+                this.tabUnregister = null;
+                getLogger().warning("[MikuVanish] 接入 TAB 失败，已跳过 TAB 集成：" + e);
+            }
         }
 
         // 冷启动：为已在线玩家拉取全量快照。
@@ -62,7 +71,7 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
             sync.sendHello();
         }
 
-        getLogger().info("[MikuVanish] 后端已启用（folia=" + isFolia() + "）。");
+        getLogger().info("[MikuVanish] 后端已启用（folia=" + FOLIA + "）。");
     }
 
     /**
@@ -111,7 +120,7 @@ public final class MikuVanishPaper extends JavaPlugin implements VanishService {
         return manager;
     }
 
-    static boolean isFolia() {
+    private static boolean detectFolia() {
         try {
             Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
             return true;
